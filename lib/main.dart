@@ -279,6 +279,8 @@ class _ScanTabState extends State<ScanTab> {
       ),
     );
   }
+
+  Future<void> _pickFromGallery() async {
     try {
       // Dùng Document Scanner với nguồn từ Thư viện: tự động nhận diện viền 4 góc và cho phép kéo chỉnh
       final result = await CunningDocumentScanner.scanDocuments(
