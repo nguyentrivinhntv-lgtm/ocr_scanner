@@ -36,3 +36,13 @@ ios/Runner.xcodeproj/xcuserdata/
 .DS_Store
 Thumbs.db
 *.log
+
+# Codemagic
+*.jks
+*.p12
+*.mobileprovision
+*.provisionprofile
+
+# Build outputs
+build/
+.dart_tool/
