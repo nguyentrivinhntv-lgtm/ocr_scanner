@@ -200,7 +200,85 @@ class _ScanTabState extends State<ScanTab> {
     }
   }
 
-  Future<void> _pickFromGallery() async {
+  /// Chế độ chụp liên tục bằng Camera:
+  /// Chụp trang 1 -> tự động mở tiếp camera chụp trang 2 -> trang 3... cho đến khi người dùng bấm Hủy/Xong
+  Future<void> _batchCameraScan() async {
+    int count = 0;
+    while (true) {
+      try {
+        final photo = await _picker.pickImage(
+          source: ImageSource.camera,
+          imageQuality: 95,
+        );
+        if (photo == null) {
+          // Người dùng bấm nút quay lại hoặc hủy chụp
+          break;
+        }
+        setState(() {
+          _pages.add(photo.path);
+          _currentPage = _pages.length - 1;
+          _imageKeyCounter++;
+        });
+        count++;
+      } catch (e) {
+        break;
+      }
+    }
+    if (count > 0) {
+      _ocrAllPages();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('📸 Đã thêm $count ảnh chụp liên tục')),
+        );
+      }
+    }
+  }
+
+  /// Hiển thị menu thêm trang nhanh
+  void _showAddOptionsSheet() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Wrap(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.document_scanner, color: Colors.indigo),
+                title: const Text('Quét bắt viền (Tự nhận diện 4 góc)'),
+                subtitle: const Text('Chụp lần lượt từng trang, tự cắt mép giấy'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _scanDocument();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_alt, color: Colors.teal),
+                title: const Text('Chụp liên tục (Nhiều trang không gián đoạn)'),
+                subtitle: const Text('Chụp xong tự mở tiếp trang sau liền tay'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _batchCameraScan();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library, color: Colors.blueGrey),
+                title: const Text('Chọn từ thư viện ảnh'),
+                subtitle: const Text('Chọn một hoặc nhiều ảnh có sẵn'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickFromGallery();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
     try {
       // Dùng Document Scanner với nguồn từ Thư viện: tự động nhận diện viền 4 góc và cho phép kéo chỉnh
       final result = await CunningDocumentScanner.scanDocuments(
@@ -514,31 +592,74 @@ class _ScanTabState extends State<ScanTab> {
             Row(
               children: [
                 Expanded(
+                  flex: 3,
                   child: FilledButton.icon(
                     onPressed: _scanDocument,
                     icon: const Icon(Icons.document_scanner),
                     label: const Text('Scan bắt viền'),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _pickFromGallery,
-                    icon: const Icon(Icons.photo_library),
-                    label: const Text('Thư viện'),
+                  flex: 3,
+                  child: FilledButton.tonalIcon(
+                    onPressed: _batchCameraScan,
+                    icon: const Icon(Icons.camera_alt),
+                    label: const Text('Chụp liên tục'),
                   ),
+                ),
+                const SizedBox(width: 6),
+                IconButton.outlined(
+                  onPressed: _pickFromGallery,
+                  icon: const Icon(Icons.photo_library),
+                  tooltip: 'Thư viện',
                 ),
               ],
             ),
             const SizedBox(height: 12),
             if (_pages.isNotEmpty) ...[
-              // Dải thumbnail các trang
+              // Dải thumbnail các trang + Nút thêm trang nhanh
               SizedBox(
                 height: 75,
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
-                  itemCount: _pages.length,
+                  itemCount: _pages.length + 1,
                   itemBuilder: (context, index) {
+                    if (index == _pages.length) {
+                      return GestureDetector(
+                        onTap: _showAddOptionsSheet,
+                        child: Container(
+                          width: 60,
+                          margin: const EdgeInsets.only(right: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.indigo.shade50,
+                            border: Border.all(
+                              color: Colors.indigo.shade300,
+                              style: BorderStyle.solid,
+                              width: 1.5,
+                            ),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.add, color: Colors.indigo, size: 22),
+                                SizedBox(height: 2),
+                                Text(
+                                  '+ Thêm',
+                                  style: TextStyle(
+                                    color: Colors.indigo,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    }
                     final isSelected = index == _currentPage;
                     return GestureDetector(
                       onTap: () => setState(() => _currentPage = index),
