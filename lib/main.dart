@@ -200,40 +200,6 @@ class _ScanTabState extends State<ScanTab> {
     }
   }
 
-  /// Chế độ chụp liên tục bằng Camera:
-  /// Chụp trang 1 -> tự động mở tiếp camera chụp trang 2 -> trang 3... cho đến khi người dùng bấm Hủy/Xong
-  Future<void> _batchCameraScan() async {
-    int count = 0;
-    while (true) {
-      try {
-        final photo = await _picker.pickImage(
-          source: ImageSource.camera,
-          imageQuality: 95,
-        );
-        if (photo == null) {
-          // Người dùng bấm nút quay lại hoặc hủy chụp
-          break;
-        }
-        setState(() {
-          _pages.add(photo.path);
-          _currentPage = _pages.length - 1;
-          _imageKeyCounter++;
-        });
-        count++;
-      } catch (e) {
-        break;
-      }
-    }
-    if (count > 0) {
-      _ocrAllPages();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('📸 Đã thêm $count ảnh chụp liên tục')),
-        );
-      }
-    }
-  }
-
   /// Hiển thị menu thêm trang nhanh
   void _showAddOptionsSheet() {
     showModalBottomSheet(
@@ -248,26 +214,17 @@ class _ScanTabState extends State<ScanTab> {
             children: [
               ListTile(
                 leading: const Icon(Icons.document_scanner, color: Colors.indigo),
-                title: const Text('Quét bắt viền (Tự nhận diện 4 góc)'),
-                subtitle: const Text('Chụp lần lượt từng trang, tự cắt mép giấy'),
+                title: const Text('Quét bắt viền (Chụp liên tục nhiều trang)'),
+                subtitle: const Text('Tự nhận diện 4 góc, chụp ảnh nhỏ bên cạnh rồi chụp tiếp'),
                 onTap: () {
                   Navigator.pop(ctx);
                   _scanDocument();
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.camera_alt, color: Colors.teal),
-                title: const Text('Chụp liên tục (Nhiều trang không gián đoạn)'),
-                subtitle: const Text('Chụp xong tự mở tiếp trang sau liền tay'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _batchCameraScan();
-                },
-              ),
-              ListTile(
                 leading: const Icon(Icons.photo_library, color: Colors.blueGrey),
                 title: const Text('Chọn từ thư viện ảnh'),
-                subtitle: const Text('Chọn một hoặc nhiều ảnh có sẵn'),
+                subtitle: const Text('Chọn thêm một hoặc nhiều ảnh có sẵn'),
                 onTap: () {
                   Navigator.pop(ctx);
                   _pickFromGallery();
@@ -594,27 +551,19 @@ class _ScanTabState extends State<ScanTab> {
             Row(
               children: [
                 Expanded(
-                  flex: 3,
                   child: FilledButton.icon(
                     onPressed: _scanDocument,
                     icon: const Icon(Icons.document_scanner),
                     label: const Text('Scan bắt viền'),
                   ),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 8),
                 Expanded(
-                  flex: 3,
-                  child: FilledButton.tonalIcon(
-                    onPressed: _batchCameraScan,
-                    icon: const Icon(Icons.camera_alt),
-                    label: const Text('Chụp liên tục'),
+                  child: OutlinedButton.icon(
+                    onPressed: _pickFromGallery,
+                    icon: const Icon(Icons.photo_library),
+                    label: const Text('Thư viện'),
                   ),
-                ),
-                const SizedBox(width: 6),
-                IconButton.outlined(
-                  onPressed: _pickFromGallery,
-                  icon: const Icon(Icons.photo_library),
-                  tooltip: 'Thư viện',
                 ),
               ],
             ),
