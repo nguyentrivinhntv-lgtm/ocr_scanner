@@ -166,10 +166,48 @@ class _ScanTabState extends State<ScanTab> {
   final _recognizer = TextRecognizer(script: TextRecognitionScript.latin);
 
   final List<String> _pages = [];
+  final List<String> _originalPages = [];
   String _text = '';
   bool _loading = false;
   int _currentPage = 0;
   int _imageKeyCounter = 0;
+
+  /// Thêm danh sách ảnh mới và lưu lại bản sao ảnh gốc
+  Future<void> _addPages(List<String> newPaths) async {
+    if (newPaths.isEmpty) return;
+    setState(() => _loading = true);
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final List<String> copiedWorking = [];
+      final List<String> copiedOriginal = [];
+
+      for (int i = 0; i < newPaths.length; i++) {
+        final src = File(newPaths[i]);
+        final ext = src.path.split('.').last;
+        final origPath = '${tempDir.path}/orig_${timestamp}_$i.$ext';
+        final workPath = '${tempDir.path}/work_${timestamp}_$i.$ext';
+        await src.copy(origPath);
+        await src.copy(workPath);
+        copiedOriginal.add(origPath);
+        copiedWorking.add(workPath);
+      }
+
+      setState(() {
+        _pages.addAll(copiedWorking);
+        _originalPages.addAll(copiedOriginal);
+        _currentPage = _pages.length - copiedWorking.length;
+        _imageKeyCounter++;
+      });
+      await _ocrAllPages();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Lỗi nạp ảnh: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
 
   /// Quét tài liệu với Google ML Kit Scanner Full Mode:
   /// - Tự động phát hiện 4 góc trang giấy
@@ -184,12 +222,7 @@ class _ScanTabState extends State<ScanTab> {
         androidScannerMode: AndroidScannerMode.full,
       );
       if (result != null && result.images.isNotEmpty) {
-        setState(() {
-          _pages.addAll(result.images);
-          _currentPage = _pages.length - result.images.length;
-          _imageKeyCounter++;
-        });
-        _ocrAllPages();
+        await _addPages(result.images);
       }
     } catch (e) {
       if (mounted) {
@@ -247,24 +280,14 @@ class _ScanTabState extends State<ScanTab> {
         androidScannerMode: AndroidScannerMode.full,
       );
       if (result != null && result.images.isNotEmpty) {
-        setState(() {
-          _pages.addAll(result.images);
-          _currentPage = _pages.length - result.images.length;
-          _imageKeyCounter++;
-        });
-        _ocrAllPages();
+        await _addPages(result.images);
       }
     } catch (e) {
       // Fallback nếu thư viện ảnh hệ thống cần image_picker
       try {
         final picked = await _picker.pickMultiImage(imageQuality: 95);
         if (picked.isNotEmpty) {
-          setState(() {
-            _pages.addAll(picked.map((f) => f.path));
-            _currentPage = _pages.length - picked.length;
-            _imageKeyCounter++;
-          });
-          _ocrAllPages();
+          await _addPages(picked.map((f) => f.path).toList());
         }
       } catch (err) {
         if (mounted) {
@@ -276,53 +299,65 @@ class _ScanTabState extends State<ScanTab> {
     }
   }
 
-  /// Áp dụng bộ lọc tài liệu: Magic Enhance (làm sáng nền, đậm chữ) hoặc B&W (đen trắng)
+  /// Áp dụng bộ lọc tài liệu tự nhiên:
+  /// - 'original': Khôi phục ảnh gốc tự nhiên, chữ sắc nét nguyên bản không bị biến dạng
+  /// - 'magic': Tăng sáng dịu nền giấy, giữ nguyên viền chữ mịn màng không bị gai/nhoè/lem mực
+  /// - 'bw': Đen trắng văn phòng thanh thoát, rõ chữ không cháy nét
   Future<void> _applyDocumentFilter(String filterMode) async {
-    if (_pages.isEmpty) return;
+    if (_pages.isEmpty || _originalPages.isEmpty) return;
     setState(() => _loading = true);
 
     try {
-      final path = _pages[_currentPage];
-      final bytes = await File(path).readAsBytes();
-      final decoded = img.decodeImage(bytes);
+      final origPath = _originalPages[_currentPage];
+      final workPath = _pages[_currentPage];
 
-      if (decoded != null) {
-        img.Image processed;
-        if (filterMode == 'bw') {
-          // Chế độ Đen trắng scan rõ chữ
-          processed = img.grayscale(decoded);
-          processed = img.contrast(processed, contrast: 150);
-        } else if (filterMode == 'magic') {
-          // Chế độ Magic Color: Tăng tương phản, làm trắng giấy, đậm mực
-          processed = img.contrast(decoded, contrast: 135);
-          processed = img.adjustColor(processed, brightness: 1.12);
-        } else {
-          processed = decoded;
+      if (filterMode == 'original') {
+        // Khôi phục 100% nguyên bản ảnh gốc từ camera/thư viện
+        final origBytes = await File(origPath).readAsBytes();
+        await File(workPath).writeAsBytes(origBytes);
+      } else {
+        final bytes = await File(origPath).readAsBytes();
+        final decoded = img.decodeImage(bytes);
+
+        if (decoded != null) {
+          img.Image processed;
+          if (filterMode == 'bw') {
+            // Chế độ Đen trắng dịu, tương phản vừa phải để chữ không bị lem/răng cưa
+            processed = img.grayscale(decoded);
+            processed = img.contrast(processed, contrast: 110);
+          } else if (filterMode == 'magic') {
+            // Chế độ Sáng chữ: Làm trắng nhẹ nền giấy, giữ nguyên viền chữ thanh mảnh sắc nét
+            processed = img.adjustColor(decoded, brightness: 1.05, gamma: 0.96);
+            processed = img.contrast(decoded, contrast: 108);
+          } else {
+            processed = decoded;
+          }
+
+          final encoded = img.encodeJpg(processed, quality: 95);
+          await File(workPath).writeAsBytes(encoded);
         }
+      }
 
-        final encoded = img.encodeJpg(processed, quality: 95);
-        await File(path).writeAsBytes(encoded);
+      // Xóa cache ảnh để Flutter hiển thị ngay ảnh mới
+      PaintingBinding.instance.imageCache.clear();
+      PaintingBinding.instance.imageCache.clearLiveImages();
 
-        // Xóa cache ảnh để Flutter hiển thị ngay ảnh mới
-        PaintingBinding.instance.imageCache.clear();
-        PaintingBinding.instance.imageCache.clearLiveImages();
+      setState(() {
+        _imageKeyCounter++;
+      });
 
-        setState(() {
-          _imageKeyCounter++;
-        });
+      await _ocrAllPages();
 
-        await _ocrAllPages();
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(filterMode == 'magic'
-                  ? '✨ Đã tối ưu nét chữ và làm sáng nền giấy'
-                  : '📄 Đã chuyển sang chế độ quét Đen Trắng'),
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        }
+      if (mounted) {
+        String msg = '🌿 Đã khôi phục ảnh gốc';
+        if (filterMode == 'magic') msg = '✨ Đã làm sáng giấy & nét chữ tự nhiên';
+        if (filterMode == 'bw') msg = '📄 Đã chuyển sang chế độ Đen Trắng dịu';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(msg),
+            duration: const Duration(seconds: 1),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -481,6 +516,7 @@ class _ScanTabState extends State<ScanTab> {
       setState(() {
         _loading = false;
         _pages.clear();
+        _originalPages.clear();
         _text = '';
         _currentPage = 0;
       });
@@ -507,6 +543,9 @@ class _ScanTabState extends State<ScanTab> {
   void _deletePage(int index) {
     setState(() {
       _pages.removeAt(index);
+      if (_originalPages.length > index) {
+        _originalPages.removeAt(index);
+      }
       if (_currentPage >= _pages.length && _pages.isNotEmpty) {
         _currentPage = _pages.length - 1;
       }
@@ -535,6 +574,7 @@ class _ScanTabState extends State<ScanTab> {
             IconButton(
               onPressed: () => setState(() {
                 _pages.clear();
+                _originalPages.clear();
                 _text = '';
                 _currentPage = 0;
                 _imageKeyCounter++;
@@ -666,20 +706,26 @@ class _ScanTabState extends State<ScanTab> {
                     'Trang ${_currentPage + 1} / ${_pages.length}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
-                  // Thanh công cụ bộ lọc làm nét chữ / sáng nền giấy
+                  // Thanh công cụ bộ lọc: Ảnh gốc, Sáng chữ, Đen trắng
                   Row(
                     children: [
                       TextButton.icon(
                         style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                        onPressed: _loading ? null : () => _applyDocumentFilter('original'),
+                        icon: const Icon(Icons.image_outlined, size: 15, color: Colors.teal),
+                        label: const Text('Ảnh gốc', style: TextStyle(fontSize: 11)),
+                      ),
+                      TextButton.icon(
+                        style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
                         onPressed: _loading ? null : () => _applyDocumentFilter('magic'),
-                        icon: const Icon(Icons.auto_fix_high, size: 16, color: Colors.indigo),
-                        label: const Text('Làm nét chữ', style: TextStyle(fontSize: 12)),
+                        icon: const Icon(Icons.auto_fix_high, size: 15, color: Colors.indigo),
+                        label: const Text('Sáng chữ', style: TextStyle(fontSize: 11)),
                       ),
                       TextButton.icon(
                         style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
                         onPressed: _loading ? null : () => _applyDocumentFilter('bw'),
-                        icon: const Icon(Icons.contrast, size: 16, color: Colors.blueGrey),
-                        label: const Text('Đen trắng', style: TextStyle(fontSize: 12)),
+                        icon: const Icon(Icons.contrast, size: 15, color: Colors.blueGrey),
+                        label: const Text('Đen trắng', style: TextStyle(fontSize: 11)),
                       ),
                     ],
                   ),
